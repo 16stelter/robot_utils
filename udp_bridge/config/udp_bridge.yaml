@@ -1,0 +1,11 @@
+/**:
+  ros__parameters:
+    encryption_key: "planetary"
+    target_ips: 
+      - 192.168.122.255
+    port: 1234
+    send_frequency: 300
+    sender_queue_max_size: 5
+
+    topics:
+      - /lowstate
