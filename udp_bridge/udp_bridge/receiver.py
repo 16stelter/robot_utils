@@ -11,11 +11,18 @@ from rosidl_runtime_py.utilities import get_message
 
 from udp_bridge.message_handler import MessageHandler
 
+import yaml, os
+from ament_index_python.packages import get_package_share_directory
+
 
 class UdpBridgeReceiver:
     def __init__(self, node: Node):
         self.node = node
-        port: str = node.get_parameter("port").value
+        node.declare_parameter("config_file", os.path.join(get_package_share_directory("udp_bridge"), "config", "udp_bridge.yaml"))
+        config_file = node.get_parameter("config_file").value
+        with open(config_file, "r") as f:
+            self.params = yaml.safe_load(f)
+        port: str =  self.params["port"]
         self.node.get_logger().info(f"Initializing udp_bridge on port {port}")
 
         self.sock = socket.socket(type=socket.SOCK_DGRAM)
@@ -26,8 +33,8 @@ class UdpBridgeReceiver:
         self.publishers = {}
 
         encryption_key: str | None = None
-        if node.has_parameter("encryption_key"):
-            encryption_key = node.get_parameter("encryption_key").value
+        if self.params.get("encryption_key"):
+            encryption_key = self.params["encryption_key"]
 
         self.message_handler = MessageHandler(encryption_key)
 
@@ -70,9 +77,9 @@ class UdpBridgeReceiver:
         :param msg: The ROS message which was sent on the originating host
         :param hostname: The hostname of the originating host
         """
-        if topic.startswith("/" + hostname):
-            # remove hostname
-            namespaced_topic = topic[len(hostname) + 1 :]
+        if hostname in topic:
+            # remove everything up to and including the hostname from the topic name
+            namespaced_topic = topic.split(hostname, 1)[1]
         else:
             # publish msg under host namespace
             namespaced_topic = hostname.replace("-", "_") + topic
@@ -88,21 +95,6 @@ class UdpBridgeReceiver:
 
         self.publishers[namespaced_topic].publish(msg)
 
-
-# @TODO: replace by usage of https://github.com/PickNikRobotics/generate_parameter_library
-def validate_params(node: Node) -> bool:
-    result = True
-
-    if not node.has_parameter("port"):
-        node.get_logger().fatal("parameter 'port' not found")
-        result = False
-    if not isinstance(node.get_parameter("port").value, int):
-        node.get_logger().fatal("parameter 'port' is not an Integer")
-        result = False
-
-    return result
-
-
 def run_spin_in_thread(node):
     # Necessary in ROS 2, or else we get stuck
     thread = Thread(target=rclpy.spin, args=[node], daemon=True)
@@ -111,10 +103,8 @@ def run_spin_in_thread(node):
 
 def main():
     rclpy.init()
-    node = Node("udp_bridge_receiver", automatically_declare_parameters_from_overrides=True)
-
-    if validate_params(node):
-        # setup udp receiver
-        receiver = UdpBridgeReceiver(node)
-        run_spin_in_thread(node)
-        receiver.recv_message()
+    node = Node("udp_bridge_receiver")
+    # setup udp receiver
+    receiver = UdpBridgeReceiver(node)
+    run_spin_in_thread(node)
+    receiver.recv_message()

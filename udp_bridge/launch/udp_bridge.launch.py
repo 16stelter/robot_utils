@@ -12,16 +12,10 @@ import os
 
 def generate_launch_description():
 
-    default_config = os.path.join(
-        get_package_share_directory('udp_bridge'),
-        'config',
-        'udp_bridge.yaml'
-    )
-
     config_file_arg = DeclareLaunchArgument(
-        'config_file',
-        default_value=default_config,
-        description='Path to the UDP bridge parameter YAML file'
+        "config_file",
+        default_value=os.path.join(get_package_share_directory("udp_bridge"), "config", "udp_bridge.yaml"),
+        description="Path to the configuration file for the UDP bridge"
     )
 
     receiver_node = Node(
@@ -29,7 +23,9 @@ def generate_launch_description():
         executable='receiver',
         output='screen',
         parameters=[
-            LaunchConfiguration('config_file')
+            {
+                'config_file': LaunchConfiguration('config_file')
+            }
         ]
     )
 
@@ -38,7 +34,9 @@ def generate_launch_description():
         executable='sender',
         output='screen',
         parameters=[
-            LaunchConfiguration('config_file')
+            {
+                'config_file': LaunchConfiguration('config_file')
+            }
         ]
     )
 

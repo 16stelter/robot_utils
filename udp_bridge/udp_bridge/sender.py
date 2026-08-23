@@ -12,6 +12,8 @@ from rclpy.serialization import serialize_message
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
 from rosidl_runtime_py.utilities import get_message
+import yaml, os
+from ament_index_python.packages import get_package_share_directory
 
 from udp_bridge.message_handler import MessageHandler
 
@@ -21,7 +23,7 @@ class AutoSubscriber:
     in a queue.
     """
 
-    def __init__(self, topic: str, hostname: str, queue_size: int, message_handler: MessageHandler, node: Node):
+    def __init__(self, topic: str, hostname: str, queue_size: int, message_handler: MessageHandler, node: Node, targets: list[str]):
         """
         :param topic: Topic to subscribe to
         :type topic: str
@@ -35,6 +37,7 @@ class AutoSubscriber:
         self.timer: Timer | None = None
         self.msg_type_name: str = None
         self.hostname: str = hostname
+        self.targets: list[str] = targets
 
         self.__subscriber: Subscription | None = None
         self.__latched_subscriber: Subscription | None = None
@@ -110,66 +113,32 @@ class AutoSubscriber:
                 self.timer.cancel()
             self.timer = self.node.create_timer(10.0, lambda: self.__message_callback(data, latched=True))
 
-
-# @TODO: replace by usage of https://github.com/PickNikRobotics/generate_parameter_library
-def validate_params(node: Node) -> bool:
-    result = True
-
-    if not node.has_parameter("port"):
-        node.get_logger().fatal("parameter 'port' not found")
-        result = False
-    if not isinstance(node.get_parameter("port").value, int):
-        node.get_logger().fatal("parameter 'port' is not an Integer")
-        result = False
-
-    if not node.has_parameter("topics"):
-        node.get_logger().fatal("parameter 'port' not found")
-        result = False
-    if not isinstance(node.get_parameter("topics").value, list):
-        node.get_logger().fatal("parameter 'topics' is not a list")
-        result = False
-    if len(node.get_parameter("topics").value) == 0:
-        node.get_logger().warn("parameter 'topics' is an empty list")
-
-    if not node.has_parameter("sender_queue_max_size"):
-        node.get_logger().fatal("parameter 'sender_queue_max_size' not found")
-        result = False
-    if not isinstance(node.get_parameter("sender_queue_max_size").value, int):
-        node.get_logger().fatal("parameter 'sender_queue_max_size' is not an Integer")
-        result = False
-
-    if not node.has_parameter("send_frequency"):
-        node.get_logger().fatal("parameter 'send_frequency' not found")
-        result = False
-    if not isinstance(node.get_parameter("send_frequency").value, float) and not isinstance(
-        node.get_parameter("send_frequency").value, int
-    ):
-        node.get_logger().fatal("parameter 'send_frequency' is not an Integer or Float")
-        result = False
-    if not node.has_parameter("hostname"):
-        node.get_logger().fatal("parameter 'hostname' not found")
-        result = False
-    if not isinstance(node.get_parameter("hostname").value, str):
-        node.get_logger().fatal("parameter 'hostname' is not a String")
-        result = False
-
-    return result
-
-
 class UdpBridgeSender:
     def __init__(self, node: Node):
+        node.declare_parameter("config_file", os.path.join(get_package_share_directory("udp_bridge"), "config", "udp_bridge.yaml"))
+        config_file = node.get_parameter("config_file").value
+        try:
+            with open(config_file, "r") as f:
+                self.params = yaml.safe_load(f)
+                node.get_logger().info(f"Successfully loaded config from: {config_file}")
+                node.get_logger().info(f"Config contents: {self.params}")
+        except Exception as e:
+            node.get_logger().error(f"Failed to load config from: {config_file} with error: {e}")
+            raise e
+
         self.node = node
-        self.freq: float = node.get_parameter("send_frequency").value
-        self.targets: list[str] = node.get_parameter("target_ips").value
-        self.port: int = node.get_parameter("port").value
+        self.freq = self.params["send_frequency"]
+        self.topics = self.params["topics"]
+        self.port = self.params["port"]
         self.sock = self.setup_udp_socket()
-        hostname = node.get_parameter("hostname").value
-        topics: list[str] = node.get_parameter("topics").value
-        max_queue_size: int = node.get_parameter("sender_queue_max_size").value
+        hostname = self.params["hostname"]
+        max_queue_size = self.params["sender_queue_max_size"]
         message_handler = self.setup_message_handler()
-        self.subscribers: list[AutoSubscriber] = list(
-            map(lambda topic: AutoSubscriber(topic, hostname, max_queue_size, message_handler, node), topics)
-        )
+        self.subscribers: list[AutoSubscriber] = []
+        for topic_config in self.topics:
+            topic = topic_config["name"]
+            targets = topic_config["target_ips"]
+            self.subscribers.append(AutoSubscriber(topic, hostname, max_queue_size, message_handler, node, targets))
 
     def setup_udp_socket(self) -> socket.socket:
         sock = socket.socket(type=socket.SOCK_DGRAM)
@@ -178,8 +147,8 @@ class UdpBridgeSender:
 
     def setup_message_handler(self) -> MessageHandler:
         encryption_key: str | None = None
-        if self.node.has_parameter("encryption_key"):
-            encryption_key = self.node.get_parameter("encryption_key").value
+        if self.params.get("encryption_key"):
+            encryption_key = self.params["encryption_key"]
 
         return MessageHandler(encryption_key)
 
@@ -188,7 +157,7 @@ class UdpBridgeSender:
             try:
                 data = subscriber.queue.get_nowait()
 
-                for target in self.targets:
+                for target in subscriber.targets:
                     try:
                         self.sock.sendto(data, (target, self.port))
                     except Exception as e:
@@ -202,15 +171,15 @@ class UdpBridgeSender:
 
 def main():
     rclpy.init()
-    node = Node("udp_bridge_sender", automatically_declare_parameters_from_overrides=True)
 
-    if validate_params(node):
-        sender = UdpBridgeSender(node)
+    node = Node("udp_bridge_sender")
 
-        exec = SingleThreadedExecutor()
-        exec.add_node(node)
-        node.create_timer((1 / sender.freq), sender.send_messages_in_queue)
-        exec.spin()
+    sender = UdpBridgeSender(node)
 
-        node.destroy_node()
-        rclpy.shutdown()
+    exec = SingleThreadedExecutor()
+    exec.add_node(node)
+    node.create_timer((1 / sender.freq), sender.send_messages_in_queue)
+    exec.spin()
+
+    node.destroy_node()
+    rclpy.shutdown()
