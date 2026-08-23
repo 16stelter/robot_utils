@@ -2,11 +2,13 @@
   ros__parameters:
     encryption_key: "planetary"
     target_ips: 
-      - 192.168.0.255
+      - 192.168.122.2
+      - 192.168.122.18
     port: 1234
     send_frequency: 300
     sender_queue_max_size: 5
     hostname: "default"
 
     topics:
-      - /chatter
+      - /unitree/cmd_vel
+      - /exomy/cmd_vel

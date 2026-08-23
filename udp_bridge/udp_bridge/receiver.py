@@ -70,9 +70,12 @@ class UdpBridgeReceiver:
         :param msg: The ROS message which was sent on the originating host
         :param hostname: The hostname of the originating host
         """
-
-        # publish msg under host namespace
-        namespaced_topic = hostname.replace("-", "_") + topic
+        if topic.startswith("/" + hostname):
+            # remove hostname
+            namespaced_topic = topic[len(hostname) + 1 :]
+        else:
+            # publish msg under host namespace
+            namespaced_topic = hostname.replace("-", "_") + topic
 
         # create a publisher object if we don't have one already
         if namespaced_topic not in self.publishers.keys():

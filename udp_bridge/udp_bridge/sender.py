@@ -15,16 +15,13 @@ from rosidl_runtime_py.utilities import get_message
 
 from udp_bridge.message_handler import MessageHandler
 
-HOSTNAME = socket.gethostname()
-
-
 class AutoSubscriber:
     """
     A class which automatically subscribes to a topic as soon as it becomes available and buffers received messages
     in a queue.
     """
 
-    def __init__(self, topic: str, queue_size: int, message_handler: MessageHandler, node: Node):
+    def __init__(self, topic: str, hostname: str, queue_size: int, message_handler: MessageHandler, node: Node):
         """
         :param topic: Topic to subscribe to
         :type topic: str
@@ -37,6 +34,7 @@ class AutoSubscriber:
         self.node: Node = node
         self.timer: Timer | None = None
         self.msg_type_name: str = None
+        self.hostname: str = hostname
 
         self.__subscriber: Subscription | None = None
         self.__latched_subscriber: Subscription | None = None
@@ -92,7 +90,7 @@ class AutoSubscriber:
                 "data": serialize_message(data),
                 "topic": self.topic,
                 "msg_type_name": self.msg_type_name,
-                "hostname": HOSTNAME,
+                "hostname": self.hostname,
                 "latched": latched,
             }
         )
@@ -148,6 +146,12 @@ def validate_params(node: Node) -> bool:
     ):
         node.get_logger().fatal("parameter 'send_frequency' is not an Integer or Float")
         result = False
+    if not node.has_parameter("hostname"):
+        node.get_logger().fatal("parameter 'hostname' not found")
+        result = False
+    if not isinstance(node.get_parameter("hostname").value, str):
+        node.get_logger().fatal("parameter 'hostname' is not a String")
+        result = False
 
     return result
 
@@ -159,11 +163,12 @@ class UdpBridgeSender:
         self.targets: list[str] = node.get_parameter("target_ips").value
         self.port: int = node.get_parameter("port").value
         self.sock = self.setup_udp_socket()
+        hostname = node.get_parameter("hostname").value
         topics: list[str] = node.get_parameter("topics").value
         max_queue_size: int = node.get_parameter("sender_queue_max_size").value
         message_handler = self.setup_message_handler()
         self.subscribers: list[AutoSubscriber] = list(
-            map(lambda topic: AutoSubscriber(topic, max_queue_size, message_handler, node), topics)
+            map(lambda topic: AutoSubscriber(topic, hostname, max_queue_size, message_handler, node), topics)
         )
 
     def setup_udp_socket(self) -> socket.socket:
