@@ -6,6 +6,7 @@ from launch.substitutions import LaunchConfiguration
 
 from launch_ros.actions import Node
 from ament_index_python.packages import get_package_share_directory
+from launch.substitutions import PythonExpression
 
 import os
 
@@ -14,7 +15,7 @@ def generate_launch_description():
 
     config_file_arg = DeclareLaunchArgument(
         "config_file",
-        default_value=os.path.join(get_package_share_directory("udp_bridge"), "config", "udp_bridge.yaml"),
+        default_value="udp_bridge.yaml",
         description="Path to the configuration file for the UDP bridge"
     )
 
@@ -24,7 +25,10 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {
-                'config_file': LaunchConfiguration('config_file')
+                'config_file': PythonExpression([
+                    "'", get_package_share_directory("udp_bridge"),
+                    "/config/", LaunchConfiguration('config_file'), "'"
+                ])
             }
         ]
     )
@@ -35,7 +39,10 @@ def generate_launch_description():
         output='screen',
         parameters=[
             {
-                'config_file': LaunchConfiguration('config_file')
+                'config_file': PythonExpression([
+                    "'", get_package_share_directory("udp_bridge"),
+                    "/config/", LaunchConfiguration('config_file'), "'"
+                ])
             }
         ]
     )

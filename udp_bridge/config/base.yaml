@@ -1,14 +1,12 @@
-/**:
-  ros__parameters:
-    encryption_key: "planetary"
-    topics: 
-      - name: "/exomy/cmd_vel"
-        target_ips:
-          - 192.168.122.2
-      - name: "/unitree/cmd_vel"
-        target_ips:
-          - 192.168.122.18
-    port: 1234
-    send_frequency: 300
-    sender_queue_max_size: 5
-    hostname: "base"
+encryption_key: "planetary"
+topics: 
+  - name: "/exomy/cmd_vel"
+    target_ips:
+      - 192.168.122.2
+  - name: "/unitree/cmd_vel"
+    target_ips:
+      - 192.168.122.18
+port: 1234
+send_frequency: 300
+sender_queue_max_size: 5
+hostname: "base"

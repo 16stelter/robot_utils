@@ -1,14 +1,12 @@
-/**:
-  ros__parameters:
-    encryption_key: "planetary"
-    topics: 
-      - name: "/odom"
-        target_ips:
-          - 192.168.122.1
-      - name: "/joint_states"
-        target_ips:
-          - 192.168.122.1
-    port: 1234
-    send_frequency: 300
-    sender_queue_max_size: 5
-    hostname: "exomy"
+encryption_key: "planetary"
+topics: 
+  - name: "/odom"
+    target_ips:
+      - 192.168.122.1
+  - name: "/joint_states"
+    target_ips:
+      - 192.168.122.1
+port: 1234
+send_frequency: 300
+sender_queue_max_size: 5
+hostname: "exomy"
