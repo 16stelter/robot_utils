@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 
+import os
+import random
 import socket
+import struct
 from queue import Empty, Full, Queue
 
 import rclpy
+import yaml
+from ament_index_python.packages import get_package_share_directory
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
@@ -12,10 +17,11 @@ from rclpy.serialization import serialize_message
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
 from rosidl_runtime_py.utilities import get_message
-import yaml, os
-from ament_index_python.packages import get_package_share_directory
 
 from udp_bridge.message_handler import MessageHandler
+
+# Fragment header (network byte order): message id, fragment index, fragment count
+FRAGMENT_HEADER = struct.Struct("!IHH")
 
 class AutoSubscriber:
     """
@@ -130,6 +136,10 @@ class UdpBridgeSender:
         self.freq = self.params["send_frequency"]
         self.topics = self.params["topics"]
         self.port = self.params["port"]
+
+        self.max_packet_size: int = self.params.get("max_packet_size", 1400) # 1400 bytes is smaller than the typical MTU of 1500 bytes, leaving some safety margin
+        self.next_msg_id: int = random.randint(0, 0xFFFFFFFF)
+
         self.sock = self.setup_udp_socket()
         hostname = self.params["hostname"]
         max_queue_size = self.params["sender_queue_max_size"]
@@ -143,6 +153,7 @@ class UdpBridgeSender:
     def setup_udp_socket(self) -> socket.socket:
         sock = socket.socket(type=socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, self.params.get("send_buffer_size", 8 * 1024 * 1024))
         return sock
 
     def setup_message_handler(self) -> MessageHandler:
@@ -152,21 +163,47 @@ class UdpBridgeSender:
 
         return MessageHandler(encryption_key)
 
+    def split_into_packets(self, data: bytes) -> list[bytes]:
+        """
+        Split a message into packets of at most max_packet_size bytes (fragment header included).
+        A message which fits into one packet results in a single packet.
+        """
+        chunk_size = self.max_packet_size - FRAGMENT_HEADER.size
+        count = max(1, -(-len(data) // chunk_size))
+        if count > 0xFFFF:
+            raise ValueError(
+                f"message of {len(data)} bytes needs {count} fragments, but at most {0xFFFF} are supported"
+            )
+
+        msg_id = self.next_msg_id
+        self.next_msg_id = (self.next_msg_id + 1) & 0xFFFFFFFF
+
+        return [
+            FRAGMENT_HEADER.pack(msg_id, index, count) + data[index * chunk_size : (index + 1) * chunk_size]
+            for index in range(count)
+        ]
+
     def send_messages_in_queue(self):
         for subscriber in self.subscribers:
             try:
                 data = subscriber.queue.get_nowait()
-
-                for target in subscriber.targets:
-                    try:
-                        self.sock.sendto(data, (target, self.port))
-                    except Exception as e:
-                        self.node.get_logger().error(
-                            f"Could not send data of topic {subscriber.topic} to {target} with error {str(e)}"
-                        )
-
             except Empty:
-                pass
+                continue
+
+            try:
+                packets = self.split_into_packets(data)
+            except ValueError as e:
+                self.node.get_logger().error(f"Could not split packets for topic {subscriber.topic}: {e}")
+                continue
+
+            for target in subscriber.targets:
+                try:
+                    for packet in packets:
+                        self.sock.sendto(packet, (target, self.port))
+                except Exception as e:
+                    self.node.get_logger().error(
+                        f"Could not send data of topic {subscriber.topic} to {target} with error {str(e)}"
+                    )
 
 
 def main():
@@ -183,3 +220,6 @@ def main():
 
     node.destroy_node()
     rclpy.shutdown()
+
+if __name__ == "__main__":
+    main()
