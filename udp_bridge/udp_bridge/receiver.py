@@ -179,6 +179,8 @@ class UdpBridgeReceiver:
         :param topic: The topic on which the message was sent on the originating host
         :param msg: The ROS message which was sent on the originating host
         :param hostname: The hostname of the originating host
+
+        todo: this does not preserve the original qos profile
         """
         if hostname in topic:
             # remove everything up to and including the hostname from the topic name

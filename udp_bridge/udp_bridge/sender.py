@@ -12,7 +12,7 @@ from ament_index_python.packages import get_package_share_directory
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.logging import LoggingSeverity
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.serialization import serialize_message
 from rclpy.subscription import Subscription
 from rclpy.timer import Timer
@@ -46,7 +46,6 @@ class AutoSubscriber:
         self.targets: list[str] = targets
 
         self.__subscriber: Subscription | None = None
-        self.__latched_subscriber: Subscription | None = None
         self.__subscribe()
 
     def __subscribe(self, backoff=1.0):
@@ -72,14 +71,22 @@ class AutoSubscriber:
                 latched = any(
                     info.qos_profile.durability == DurabilityPolicy.TRANSIENT_LOCAL for info in publisher_infos
                 )
-                self.__subscriber = self.node.create_subscription(data_class, self.topic, self.__message_callback, 1)
-                if latched:
-                    self.__latched_subscriber = self.node.create_subscription(
-                        data_class,
-                        self.topic,
-                        lambda msg: self.__message_callback(msg, latched=True),
-                        QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
-                    )
+                qos_profile = QoSProfile(
+                    depth=10,
+                    reliability=ReliabilityPolicy.BEST_EFFORT,
+                    durability=(
+                        DurabilityPolicy.TRANSIENT_LOCAL
+                        if latched
+                        else DurabilityPolicy.VOLATILE
+                    ),
+                )
+
+                self.__subscriber = self.node.create_subscription(
+                    data_class,
+                    self.topic,
+                    lambda msg: self.__message_callback(msg, latched=latched),
+                    qos_profile,
+                )
                 self.node.get_logger().debug(f"Subscribed to topic {self.topic}")
                 return
 
