@@ -1,9 +1,12 @@
 encryption_key: "planetary"
 topics: 
-  - name: "/odom"
+  - name: "/camera/color/image_raw/compressed"
     target_ips:
       - 192.168.122.1
-  - name: "/joint_states"
+  - name: "/camera/color/camera_info"
+    target_ips:
+      - 192.168.122.1
+  - name: "/camera/imu"
     target_ips:
       - 192.168.122.1
 port: 1234
