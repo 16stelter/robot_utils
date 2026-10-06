@@ -182,9 +182,9 @@ class UdpBridgeReceiver:
 
         todo: this does not preserve the original qos profile
         """
-        if hostname in topic:
+        if self.params["hostname"] in topic:
             # remove everything up to and including the hostname from the topic name
-            namespaced_topic = topic.split(hostname, 1)[1]
+            namespaced_topic = topic.split(self.params["hostname"], 1)[1]
         else:
             # publish msg under host namespace
             namespaced_topic = hostname.replace("-", "_") + topic
