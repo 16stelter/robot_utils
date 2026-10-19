@@ -42,7 +42,8 @@ class UdpBridgeReceiver:
                 f"Consider raising net.core.rmem_max if large messages get lost."
             )
         self.sock.bind(("0.0.0.0", port))
-        self.sock.settimeout(1)
+        self.sock.setblocking(False)
+        self.timer = self.node.create_timer(0.001, self.recv_message)
 
         self.known_senders: list[str] = []
         self.publishers = {}
@@ -63,7 +64,8 @@ class UdpBridgeReceiver:
         """
         Receive packets from the network, reassemble them into messages, process those and publish them into ROS
         """
-        while rclpy.ok():
+        self.purge_pending()
+        while True:
             try:
                 # 65535 is the upper limit for the size because of network properties
                 packet, source = self.sock.recvfrom(65535)
@@ -71,11 +73,11 @@ class UdpBridgeReceiver:
                     msg = self.reassemble(packet, source)
                 except ValueError as e:
                     self.node.get_logger().warning(f"Ignoring invalid packet from {source}: {e}")
-                    return
+                    continue
                 if msg is not None:
                     self.handle_message(msg)
-            except socket.timeout:
-                pass
+            except BlockingIOError:
+                break
 
     def reassemble(self, packet: bytes, source) -> bytes | None:
         """
@@ -200,19 +202,12 @@ class UdpBridgeReceiver:
 
         self.publishers[namespaced_topic].publish(msg)
 
-def run_spin_in_thread(node):
-    # Necessary in ROS 2, or else we get stuck
-    thread = Thread(target=rclpy.spin, args=[node], daemon=True)
-    thread.start()
-
-
 def main():
     rclpy.init()
     node = Node("udp_bridge_receiver")
     # setup udp receiver
     receiver = UdpBridgeReceiver(node)
-    run_spin_in_thread(node)
-    receiver.recv_message()
+    rclpy.spin(node)
 
 if __name__ == "__main__":
     main()

@@ -4,6 +4,7 @@ import os
 import random
 import socket
 import struct
+from collections import OrderedDict
 from queue import Empty, Full, Queue
 
 import rclpy
@@ -44,6 +45,13 @@ class AutoSubscriber:
         self.msg_type_name: str = None
         self.hostname: str = hostname
         self.targets: list[str] = targets
+
+        # Latched topics (e.g. tf_static) can have several publishers, each of which publishes its own message once.
+        # We keep every distinct latched message (serialized ROS message -> encoded message) and resend all of them
+        # periodically, because we cannot latch on the other side.
+        self.latched_msgs: OrderedDict[bytes, bytes] = OrderedDict()
+        self.latched_timer: Timer | None = None
+        self.max_latched: int = 10
 
         self.__subscriber: Subscription | None = None
         self.__subscribe()
@@ -100,10 +108,21 @@ class AutoSubscriber:
         )
         self.timer = self.node.create_timer(backoff, lambda: self.__subscribe(backoff * 1.2))
 
+    def _enqueue(self, encoded_msg: bytes):
+        try:
+            self.queue.put_nowait(encoded_msg)
+        except Full:
+            try:
+                self.queue.get_nowait()
+                self.queue.put_nowait(encoded_msg)
+            except (Empty, Full):
+                pass
+
     def __message_callback(self, data, latched=False):
-        encrypted_msg = self.message_handler.encrypt_and_encode(
+        serialized = serialize_message(data)
+        encoded_msg = self.message_handler.encrypt_and_encode(
             {
-                "data": serialize_message(data),
+                "data": serialized,
                 "topic": self.topic,
                 "msg_type_name": self.msg_type_name,
                 "hostname": self.hostname,
@@ -111,20 +130,20 @@ class AutoSubscriber:
             }
         )
 
-        try:
-            self.queue.put_nowait(encrypted_msg)
-        except Full:
-            try:
-                self.queue.get_nowait()
-                self.queue.put_nowait(encrypted_msg)
-            except (Empty, Full):
-                pass
+        self._enqueue(encoded_msg)
 
-        # for latched messages, republish them every ten seconds because we cannot latch on the other side
         if latched:
-            if self.timer:
-                self.timer.cancel()
-            self.timer = self.node.create_timer(10.0, lambda: self.__message_callback(data, latched=True))
+            self.latched_msgs[serialized] = encoded_msg
+            self.latched_msgs.move_to_end(serialized)
+            while len(self.latched_msgs) > self.max_latched:
+                self.latched_msgs.popitem(last=False)
+
+            if self.latched_timer is None:
+                self.latched_timer = self.node.create_timer(10.0, self.__republish_latched)
+
+    def __republish_latched(self):
+        for encoded_msg in list(self.latched_msgs.values()):
+            self._enqueue(encoded_msg)
 
 class UdpBridgeSender:
     def __init__(self, node: Node):
