@@ -11,7 +11,7 @@ import rclpy
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.serialization import deserialize_message
 from rosidl_runtime_py.utilities import get_message
 
@@ -47,6 +47,10 @@ class UdpBridgeReceiver:
 
         self.known_senders: list[str] = []
         self.publishers = {}
+        # Latched messages which were already published, per (hostname, topic). The sender resends its latched
+        # messages periodically, but publishing them again would only fill the transient local history of the
+        # publisher with duplicates and push the other latched messages out of it.
+        self.latched_seen: dict[tuple[str, str], set[bytes]] = {}
 
         encryption_key: str | None = None
         if self.params.get("encryption_key"):
@@ -162,7 +166,8 @@ class UdpBridgeReceiver:
         try:
             deserialized_msg = self.message_handler.decrypt_and_decode(msg)
             msg_type_name = deserialized_msg.get("msg_type_name")
-            data = deserialize_message(deserialized_msg.get("data"), get_message(msg_type_name))
+            raw_data: bytes = deserialized_msg.get("data")
+            data = deserialize_message(raw_data, get_message(msg_type_name))
             topic: str = deserialized_msg.get("topic")
             hostname: str = deserialized_msg.get("hostname")
             latched: bool = deserialized_msg.get("latched")
@@ -170,7 +175,15 @@ class UdpBridgeReceiver:
             if hostname not in self.known_senders:
                 self.known_senders.append(hostname)
 
-            self.publish(topic, data, hostname, latched)
+            if latched:
+                seen = self.latched_seen.setdefault((hostname, topic), set())
+                if raw_data in seen:
+                    # already published, subscribers which join later get it from the transient local history
+                    return
+                self.publish(topic, data, hostname, latched)
+                seen.add(raw_data)
+            else:
+                self.publish(topic, data, hostname, latched)
         except Exception as e:
             self.node.get_logger().error(f"Could not deserialize received message with error {e}")
 
@@ -194,10 +207,19 @@ class UdpBridgeReceiver:
         # create a publisher object if we don't have one already
         if namespaced_topic not in self.publishers.keys():
             self.node.get_logger().info(f"Publishing new topic {namespaced_topic}")
+            if latched:
+                # keep enough history so that late joiners (e.g. a tf listener) get every latched message
+                qos_profile = QoSProfile(
+                    depth=100,
+                    reliability=ReliabilityPolicy.RELIABLE,
+                    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                )
+            else:
+                qos_profile = 10
             self.publishers[namespaced_topic] = self.node.create_publisher(
                 type(msg),
                 namespaced_topic,
-                qos_profile=QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL) if latched else 10,
+                qos_profile=qos_profile,
             )
 
         self.publishers[namespaced_topic].publish(msg)

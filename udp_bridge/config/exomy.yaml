@@ -9,6 +9,12 @@ topics:
   - name: "/camera/imu"
     target_ips:
       - 192.168.122.1
+  - name: "/tf"
+    target_ips:
+      - 192.168.122.1
+  - name: "/tf_static"
+    target_ips:
+      - 192.168.122.1
 port: 1234
 send_frequency: 300
 sender_queue_max_size: 5
