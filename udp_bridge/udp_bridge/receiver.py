@@ -47,9 +47,6 @@ class UdpBridgeReceiver:
 
         self.known_senders: list[str] = []
         self.publishers = {}
-        # Latched messages which were already published, per (hostname, topic). The sender resends its latched
-        # messages periodically, but publishing them again would only fill the transient local history of the
-        # publisher with duplicates and push the other latched messages out of it.
         self.latched_seen: dict[tuple[str, str], set[bytes]] = {}
 
         encryption_key: str | None = None
@@ -208,7 +205,6 @@ class UdpBridgeReceiver:
         if namespaced_topic not in self.publishers.keys():
             self.node.get_logger().info(f"Publishing new topic {namespaced_topic}")
             if latched:
-                # keep enough history so that late joiners (e.g. a tf listener) get every latched message
                 qos_profile = QoSProfile(
                     depth=100,
                     reliability=ReliabilityPolicy.RELIABLE,

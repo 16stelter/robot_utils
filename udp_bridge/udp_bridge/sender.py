@@ -38,7 +38,6 @@ class AutoSubscriber:
         message_handler: MessageHandler,
         node: Node,
         targets: list[str],
-        latched: bool | None = None,
     ):
         """
         :param topic: Topic to subscribe to
@@ -70,7 +69,7 @@ class AutoSubscriber:
         # periodically, because we cannot latch on the other side.
         self.latched_msgs: OrderedDict[bytes, bytes] = OrderedDict()
         self.latched_timer: Timer | None = None
-        self.max_latched: int = 10
+        self.max_latched: int = 100
 
         self.__subscriber: Subscription | None = None
         self.__subscribe()
@@ -90,33 +89,23 @@ class AutoSubscriber:
             if topic != self.topic:
                 continue
 
-            # find out if topic is latched / transient local
             publisher_infos = self.node.get_publishers_info_by_topic(topic)
             if not publisher_infos:
-                # A topic is also listed when it only has subscribers (e.g. a tf listener waiting for tf_static).
-                # Then we cannot tell yet if it will be latched, and guessing "not latched" would make us miss
-                # everything which was published before we subscribed. So wait until there is a publisher.
                 break
 
             self.msg_type_name = msg_type_names[0]
             data_class = get_message(self.msg_type_name)
             self.node.get_logger().debug(f"Want to subscribe to topic {self.topic}")
 
-            if self.latched_override is not None:
-                latched = self.latched_override
-            else:
-                latched = any(info.qos_profile.durability == DurabilityPolicy.TRANSIENT_LOCAL for info in publisher_infos)
+
+            latched = any(info.qos_profile.durability == DurabilityPolicy.TRANSIENT_LOCAL for info in publisher_infos)
 
             if latched:
-                # The old messages are only replayed to late joiners with a reliable + transient local subscription,
-                # so best effort would silently lose everything published before we subscribed.
-                # The depth must be at least the number of messages the publishers keep (tf2 uses 100).
                 qos_profile = QoSProfile(
                     depth=100,
                     reliability=ReliabilityPolicy.RELIABLE,
                     durability=DurabilityPolicy.TRANSIENT_LOCAL,
                 )
-                # a resend puts every cached message into the queue at once, which must not drop any of them
                 self.queue = Queue(max(self.queue.maxsize, self.max_latched + 1))
             else:
                 qos_profile = QoSProfile(
