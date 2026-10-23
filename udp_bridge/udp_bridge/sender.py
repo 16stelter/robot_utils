@@ -44,8 +44,6 @@ class AutoSubscriber:
         :type topic: str
         :param queue_size: How many received messages should be buffered
         :type queue_size: int
-        :param latched: Force the topic to be treated as latched (True) or not latched (False). If None, this is
-            detected from the durability of the publishers.
         """
         self.topic: str = topic
         self.queue: Queue = Queue(queue_size)
@@ -55,14 +53,6 @@ class AutoSubscriber:
         self.msg_type_name: str = None
         self.hostname: str = hostname
         self.targets: list[str] = targets
-        self.latched_override: bool | None = latched
-
-        # Latched topics (e.g. tf_static) can have several publishers, each of which publishes its own message once.
-        # We keep every distinct latched message (serialized ROS message -> encoded message) and resend all of them
-        # periodically, because we cannot latch on the other side.
-        self.latched_msgs: OrderedDict[bytes, bytes] = OrderedDict()
-        self.latched_timer: Timer | None = None
-        self.max_latched: int = 100
 
         # Latched topics (e.g. tf_static) can have several publishers, each of which publishes its own message once.
         # We keep every distinct latched message (serialized ROS message -> encoded message) and resend all of them
@@ -199,9 +189,7 @@ class UdpBridgeSender:
         for topic_config in self.topics:
             topic = topic_config["name"]
             targets = topic_config["target_ips"]
-            # optional: "latched: true/false" in the topic config overrides the detection
-            latched = topic_config.get("latched")
-            self.subscribers.append(AutoSubscriber(topic, hostname, max_queue_size, message_handler, node, targets, latched))
+            self.subscribers.append(AutoSubscriber(topic, hostname, max_queue_size, message_handler, node, targets))
 
     def setup_udp_socket(self) -> socket.socket:
         sock = socket.socket(type=socket.SOCK_DGRAM)
