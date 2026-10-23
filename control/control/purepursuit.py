@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 
 """
-Written by dhaval-lad under Apache License, Version 2.0, January 2004. See http://www.apache.org/licenses/ for more details. Modified.
+Written by dhaval-lad under Apache License, Version 2.0, January 2004. See http://www.apache.org/licenses/ for more details.
+Extended by 16stelter for use with ros2.
 """
 
 import rclpy, math, time
 from rclpy.node import Node
 from rclpy.action import ActionServer
 from rclpy.callback_groups import ReentrantCallbackGroup
-from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateThroughPoses
+from robot_localization.srv import SetPose
 from geometry_msgs.msg import Twist
 from rclpy.executors import MultiThreadedExecutor
 from tf2_ros import Buffer, TransformListener
@@ -69,11 +70,9 @@ class PurePursuitNode(Node):
 
         self.odom_frame = self.declare_parameter("odom_frame", "odom").value
         self.base_frame = self.declare_parameter("base_frame", "base_link").value
+
         cmd_vel_topic = self.declare_parameter("cmd_vel_topic", "/cmd_vel").value
         action_topic = self.declare_parameter("action_topic", "/navigate_through_poses").value
-
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
         self.publisher = self.create_publisher(Twist, self.ns + cmd_vel_topic, 10)
         self.action_server = ActionServer(
             self,
@@ -82,13 +81,42 @@ class PurePursuitNode(Node):
             self.path_action_callback,
             callback_group=ReentrantCallbackGroup()
         )
+        self.set_origin_srv = self.create_service(SetPose, self.ns + "/set_origin", self.set_origin_callback)
+        self.offset_x, self.offset_y, self.offset_yaw = 0.0, 0.0, 0.0
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # State variables
         self.path = None  # Holds the planned path
         self.index = 0  # Index of the current closest point on the path
-        self.current_x = 0.0  # Robot's current x-coordinate
-        self.current_y = 0.0  # Robot's current y-coordinate
-        self.current_yaw = 0.0  # Robot's current orientation (yaw)
+        self.current_x, self.current_y, self.current_yaw = 0.0, 0.0, 0.0  # Current robot state
+
+    def set_origin_callback(self, request, response):
+        try:    
+            transform = self.tf_buffer.lookup_transform(self.odom_frame, self.base_frame, rclpy.time.Time())
+            current_yaw = yaw_from_quaternion(
+                transform.transform.rotation.x,
+                transform.transform.rotation.y,
+                transform.transform.rotation.z,
+                transform.transform.rotation.w
+            )
+            target_yaw = yaw_from_quaternion(
+                request.pose.pose.pose.orientation.x,
+                request.pose.pose.pose.orientation.y,
+                request.pose.pose.pose.orientation.z,
+                request.pose.pose.pose.orientation.w
+            )
+            self.offset_yaw = current_yaw - target_yaw
+            dx = (request.pose.pose.pose.position.x * math.cos(self.offset_yaw) - request.pose.pose.pose.position.y * math.sin(self.offset_yaw))
+            dy = (request.pose.pose.pose.position.x * math.sin(self.offset_yaw) + request.pose.pose.pose.position.y * math.cos(self.offset_yaw))
+            self.offset_x = transform.transform.translation.x - dx
+            self.offset_y = transform.transform.translation.y - dy
+            self.get_logger().info(f"Set origin: offset_x={self.offset_x}, offset_y={self.offset_y}, offset_yaw={self.offset_yaw}")
+            return response
+        except Exception as e:
+            self.get_logger().error(f"Could not get transform from {self.odom_frame} to {self.base_frame}: {e}")
+            return response
 
     def path_action_callback(self, goal_handle):
         self.path = [(pose.pose.position.x, pose.pose.position.y) for pose in goal_handle.request.poses]
@@ -105,14 +133,18 @@ class PurePursuitNode(Node):
 
             try:
                 transform = self.tf_buffer.lookup_transform(self.odom_frame, self.base_frame, rclpy.time.Time())
-                self.current_x = transform.transform.translation.x
-                self.current_y = transform.transform.translation.y
-                self.current_yaw = yaw_from_quaternion(
+                current_yaw = yaw_from_quaternion(
                     transform.transform.rotation.x,
                     transform.transform.rotation.y,
                     transform.transform.rotation.z,
                     transform.transform.rotation.w
                 )
+                self.current_yaw = current_yaw - self.offset_yaw
+                dx = transform.transform.translation.x - self.offset_x
+                dy = transform.transform.translation.y - self.offset_y
+                self.current_x = dx * math.cos(-self.offset_yaw) - dy * math.sin(-self.offset_yaw)
+                self.current_y = dx * math.sin(-self.offset_yaw) + dy * math.cos(-self.offset_yaw)
+
             except Exception as e:
                 self.get_logger().warn(f"Could not get transform from {self.odom_frame} to {self.base_frame}: {e}")
                 time.sleep(0.05)
