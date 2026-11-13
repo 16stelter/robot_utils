@@ -35,7 +35,7 @@ def launch_setup(context, *args, **kwargs):
       {"use_stereo": False},
       {"max_cameras": 1},
       {"save_total_state": False},
-      {"config_path": os.path.join(get_package_share_directory('exomy_description'), 'config', 'open_vins', 'estimator_config.yaml')},
+      {"config_path": os.path.join(get_package_share_directory('robot_bringup'), 'config', 'open_vins_rs', 'camera_a', 'estimator_config_320.yaml')},
     ],
   remappings=[("/tf", "tf_ov"), ("/tf_static", "tf_static_ov")], # i would like to disable this entirely, but openvins has no option to disable tf publishing, so we remap it to a dummy topic
   )

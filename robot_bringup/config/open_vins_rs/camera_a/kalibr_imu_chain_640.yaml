@@ -11,7 +11,7 @@ imu0:
   gyroscope_noise_density: 0.002
   gyroscope_random_walk: 1.5e-05
   model: calibrated
-  rostopic: /camera/camera/imu
+  rostopic: /camera/imu
   time_offset: 0.0
   update_rate: 200.0
 
